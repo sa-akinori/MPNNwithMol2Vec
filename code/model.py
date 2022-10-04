@@ -11,7 +11,9 @@ from transform import SmilesToOEGraphMol, Smiles2WahsedSmiles
 ATOM_FDIM, BOND_FDIM = 400, 6
 
 def RandomSeed(seed):
-
+    """
+    
+    """
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.manual_seed(seed)
@@ -19,7 +21,7 @@ def RandomSeed(seed):
     np.random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True)
+    torch.use_deterministic_algorithms = True
 
 def Mol2Vec(smiles, idx, reference):
     mol2vec = reference.query("input_washed_smiles == @smiles").reset_index(drop=True)
@@ -156,11 +158,9 @@ class BatchMolGraph:
 class MPNEncoder(nn.Module):
     """A message passing neural network for encoding a molecule."""
 
-    def __init__(self, args, atom_fdim:int, bond_fdim:int, seed):
+    def __init__(self, args):
         """Initializes the MPNEncoder.
         :param args: Arguments.
-        :param atom_fdim: Atom features dimension.
-        :param bond_fdim: Bond features dimension.
         """
 
         super(MPNEncoder,self).__init__()
@@ -170,20 +170,20 @@ class MPNEncoder(nn.Module):
         self.zeros    = nn.Parameter(torch.zeros(args["hidden_size"]), requires_grad=False)
 
         if args["dropout_gnn"]:
-            self.W_i  = nn.Linear(atom_fdim, args["hidden_size"], bias=args["bias_gnn"])
+            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"])
             self.tune = self.act_func
             self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_gnn"]), self.act_func])
-            selfmodule = [nn.Linear(atom_fdim, args["hidden_size"], bias=args["bias_gnn"]), self.act_func]
+            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"]), self.act_func]
 
             for i in range(args["depth"]-1):
                 selfmodule.extend([nn.Dropout(p=args["drop_ratio_gnn"]), nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_gnn"]), self.act_func])
 
         elif self.args["norm_type"] == "BatchNorm":
 
-            self.W_i  = nn.Linear(atom_fdim, args["hidden_size"], bias=args["bias_gnn"])
+            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"])
             self.tune = nn.Sequential(*[nn.BatchNorm1d(args["hidden_size"]), self.act_func])
             self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_gnn"]), nn.BatchNorm1d(args["hidden_size"]), self.act_func])
-            selfmodule = [nn.Linear(atom_fdim, args["hidden_size"], bias=args["bias_gnn"]), nn.BatchNorm1d(args["hidden_size"]), self.act_func]
+            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"]), nn.BatchNorm1d(args["hidden_size"]), self.act_func]
 
             for _ in range(args["depth"]-1):
 
@@ -191,10 +191,10 @@ class MPNEncoder(nn.Module):
 
         elif self.args["norm_type"] == "LayerNorm":
 
-            self.W_i  = nn.Linear(atom_fdim, args["hidden_size"], bias=args["bias_gnn"])
+            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"])
             self.tune = nn.Sequential(*[nn.LayerNorm(args["hidden_size"]), self.act_func])
             self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_gnn"]), nn.LayerNorm(args["hidden_size"]), self.act_func])
-            selfmodule = [nn.Linear(atom_fdim, args["hidden_size"], bias=args["bias_gnn"]), nn.LayerNorm(args["hidden_size"]), self.act_func]
+            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"]), nn.LayerNorm(args["hidden_size"]), self.act_func]
 
             for _ in range(args["depth"]-1):
 
@@ -281,7 +281,7 @@ class MPN(nn.Module):
 
         super(MPN, self).__init__()
         self.args      = args
-        self.encoder   = MPNEncoder(self.args, ATOM_FDIM, BOND_FDIM, args["seed"])
+        self.encoder   = MPNEncoder(self.args)
 
     def forward(self,
                 batch) -> torch.FloatTensor:

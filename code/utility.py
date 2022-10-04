@@ -1,8 +1,15 @@
 import os
 import time
 import sys
+import datetime
 
-"MakeFolder, MakeLogFP, WriteMsgLogStdout, AssertTerminate"
+def timeStamp(return_second=False):
+    t = datetime.datetime.fromtimestamp(time.time())
+    if return_second:
+        return '{}{}{}_{}{}{}'.format(t.year, t.month, t.day, t.hour, t.minute, t.second)
+    else:
+        return '{}{}{}_{}{}'.format(t.year, t.month, t.day, t.hour, t.minute)
+    
 def AssertTerminate(equation, msg=None):
     if not equation:
         print(msg)
