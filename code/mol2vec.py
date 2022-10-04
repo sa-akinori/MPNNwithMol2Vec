@@ -3,10 +3,8 @@ import numpy as np
 import multiprocessing
 import os
 import fasttext
-import pickle
 from transform import Smiles2WahsedSmiles, SmilesToOEGraphMol
 from fingerprints import CalcECFPFeatureLevels4Mol2Vec
-from openeye.oechem import OEMolToSmiles
 from utility import MakeFolder, MakeLogFP, WriteMsgLogStdout, AssertTerminate
 from collections import defaultdict, OrderedDict
 

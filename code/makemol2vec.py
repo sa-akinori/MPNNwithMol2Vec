@@ -16,13 +16,6 @@ def make_corpus(base_folder, target_name, radius=2, use_input_smiles=True):
 def train_mol2vec(base_folder):
 
     Mol2Vec().RunFastText('%s/mol2vec/hash_sentence.txt'%base_folder,
-                            '%s/mol2vec/mol2vec_hash_radius3.bin'%base_folder, epoch=30, ws=15, minCount=1)
+                            '%s/mol2vec/mol2vec_radius3.bin'%base_folder, epoch=30, ws=15, minCount=1)
 
-#%%
-if __name__ == '__main__':
-
-    folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/"
-    make_corpus(base_folder=folder, target_name="example_mol2vec", radius=3, use_input_smiles=False)
-    train_mol2vec(base_folder=folder)
-    
     

@@ -5,11 +5,14 @@ import numpy as np
 import pandas as pd
 from torch import nn
 from mol2vec import Mol2Vec
+from makemol2vec import *
 from model import MolGraph, MPN, RandomSeed
 from sklearn.model_selection import train_test_split
 
 class downstream:
-
+    """
+    This is an example of how to use mpn and to create graph.
+    """
     def __init__(self, arg):
 
         self.arg = arg
@@ -24,11 +27,10 @@ class downstream:
         self.scaler = torch.cuda.amp.GradScaler()
 
     def get_graph(self, smiles, mol2vec):
-
+        #Generating graphs is time-consuming, so generate them in advance.
         self.graph = dict()
         for cpd in smiles:
-
-            self.graph[cpd] = MolGraph(cpd, self.arg, mol2vec)
+            self.graph[cpd] = MolGraph(cpd, mol2vec)
 
     def predict(self, data):
 
@@ -85,25 +87,31 @@ class downstream:
         
 #%%
 if __name__=="__main__":
-    
-    RandomSeed(0)
-    ##まずmakemol2vec.pyによりmol2vecモデルを作成してください。
-    ##mol2vecの生成
+    folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/"
     if 0:
-        mol2vec_model = "../data/mol2vec/mol2vec_hash_radius3.bin"
+        #Train mol2vec model
+        #folder shows the absolute path where save data of compounds for mol2vec.
+        folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/"
+        make_corpus(base_folder=folder, target_name="example_mol2vec", radius=3, use_input_smiles=False)
+        train_mol2vec(base_folder=folder)
+    
+    if 0:
+        #Generate mol2vec with smiles of downstream task
+        mol2vec_model = folder + "mol2vec/mol2vec_radius3.bin" #
         task = pd.read_csv("../data/example_downstream.csv", index_col=0)
         cpds = list(set([smiles for smiles in task["nonstereo_aromatic_smiles"]]))
         cpds = pd.Series(cpds)
         vals = Mol2Vec.GetRepresentation(cpds, mol2vec_model, radius=3, return_atomwise=True)
-        vals.to_pickle("../data/mol2vec/mol2vec.pkl", protocol=0)
+        vals.to_pickle(folder+"mol2vec/mol2vec.pkl", protocol=0)
 
     if 1:
-        #downstream task
-        task = pd.read_csv("../data/example_downstream.csv", index_col=0).drop_duplicates(subset="nonstereo_aromatic_smiles",keep=False)
+        RandomSeed(0)
+        #train and test of downstream task(Example of demonstration)
+        task = pd.read_csv("../data/example_downstream.csv", index_col=0).drop_duplicates(subset="nonstereo_aromatic_smiles", keep=False)
         train, test = train_test_split(task, test_size=0.1)
-        arg = {"device":"cuda", "epoch":2, "depth":4, "drop_ratio":0.1, "hidden_size":400, "agn_num":2, "bias":True,
-                "dropout_gnn":True, "drop_ratio_gnn":0.0, "batchnorm_gnn":False, "bias_gnn":True, "batch_size":16}
-        mol2vec = pd.read_pickle("../data/mol2vec/mol2vec.pkl")
+        arg = {"device":"cuda", "epoch":2, "depth":4, "dr_ratio_mpn":0.1, "hidden_size":400, 
+               "agn_num":2, "dr_mpn":True, "bias_mpn":True, "batch_size":16} #depth, dr_ratio_mpn, hidden_size, agn_num  are hyperparameters.
+        mol2vec = pd.read_pickle(folder+"mol2vec/mol2vec.pkl")
         model = downstream(arg)
         cpds  = [cpd for cpd in task["nonstereo_aromatic_smiles"]]
         model.get_graph(cpds, mol2vec)

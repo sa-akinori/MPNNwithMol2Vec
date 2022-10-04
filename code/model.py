@@ -4,7 +4,6 @@ import torch
 import random
 import numpy as np
 import torch.nn as nn
-import torch.nn.functional as F
 from openeye import oechem
 from transform import SmilesToOEGraphMol, Smiles2WahsedSmiles
 
@@ -12,7 +11,7 @@ ATOM_FDIM, BOND_FDIM = 400, 6
 
 def RandomSeed(seed):
     """
-    
+    To make deterministic work.
     """
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -49,7 +48,7 @@ def index_select_ND(source, index):
     suffix_dim = source.size()[1:]
     final_size = index_size + suffix_dim
     target = source[index.view(-1), :]
-    ##torch.use_deterministic_algorithms(True)を動作させるため
+    ##torch.use_deterministic_algorithms doesn't work if we use the below code.
     # target = source.index_select(dim=0, index=index.view(-1))
     target = target.view(final_size)
 
@@ -57,9 +56,6 @@ def index_select_ND(source, index):
 
 class MolGraph:
     """
-    A MolGraph represents the graph structure and featurization of a single molecule.
-    A MolGraph computes the following attributes:
-    - smiles: Smiles string.
     - n_atoms: The number of atoms in the molecule.
     - n_bonds: The number of bonds in the molecule.
     - f_atoms: A mapping from an atom index to a list atom features.
@@ -68,7 +64,7 @@ class MolGraph:
     - a2b: A mapping from an atom index to a list of bond indices.
     """
 
-    def __init__(self, smiles:str, args:dict, mol2vec):
+    def __init__(self, smiles, mol2vec):
 
         if smiles == "None":
             self.n_atoms, self.n_bonds = 0, 0
@@ -82,16 +78,17 @@ class MolGraph:
             self.n_atoms, self.n_bonds = mol.NumAtoms(), mol.NumBonds()
             self.f_atoms, self.f_bonds = [[] for _ in range(self.n_atoms)], [[] for _ in range(self.n_bonds)]
             self.a2a, self.a2b = [[] for _ in range(self.n_atoms)], [[] for _ in range(self.n_atoms)]
-
+            
+            #mol2vec of each molecule is saved in mol2vec file, so we can't extract feature of concatenated smiles by dot like "a.b".
+            #Therefore, we split smiles
             mid_idx = 0
             sep_smiles = smiles.split(".")
             for s_smile in sep_smiles:
                 for s_atom in SmilesToOEGraphMol(s_smile).GetAtoms():
                     idx = s_atom.GetIdx()
                     f_atoms = Mol2Vec(s_smile, idx, mol2vec)
-
                     self.f_atoms[idx + mid_idx] = f_atoms
-
+                   
                 mid_idx += idx+1
 
             for atom1 in mol.GetAtoms():
@@ -110,9 +107,6 @@ class MolGraph:
 
 class BatchMolGraph:
     """
-    A BatchMolGraph represents the graph structure and featurization of a batch of molecules.
-    A BatchMolGraph contains the attributes of a MolGraph plus:
-    - smiles_batch: A list of smiles strings.
     - n_mols: The number of molecules in the batch.
     - atom_fdim: The dimensionality of the atom features.
     - bond_fdim: The dimensionality of the bond features (technically the combined atom/bond features).
@@ -156,83 +150,76 @@ class BatchMolGraph:
 
 
 class MPNEncoder(nn.Module):
-    """A message passing neural network for encoding a molecule."""
 
     def __init__(self, args):
-        """Initializes the MPNEncoder.
-        :param args: Arguments.
-        """
 
         super(MPNEncoder,self).__init__()
 
-        self.args     = args
-        self.act_func = nn.GELU()
-        self.zeros    = nn.Parameter(torch.zeros(args["hidden_size"]), requires_grad=False)
+        self.args  = args
 
-        if args["dropout_gnn"]:
-            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"])
-            self.tune = self.act_func
-            self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_gnn"]), self.act_func])
-            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"]), self.act_func]
+        if args["dr_mpn"]:
+            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_mpn"])
+            self.tune = nn.PReLU()
+            self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_mpn"]), nn.PReLU()])
+            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_mpn"]), nn.PReLU()]
 
             for i in range(args["depth"]-1):
-                selfmodule.extend([nn.Dropout(p=args["drop_ratio_gnn"]), nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_gnn"]), self.act_func])
+                selfmodule.extend([nn.Dropout(p=args["dr_ratio_mpn"]), nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_mpn"]), nn.PReLU()])
 
-        elif self.args["norm_type"] == "BatchNorm":
+        elif args["norm_type"] == "BatchNorm":
 
-            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"])
-            self.tune = nn.Sequential(*[nn.BatchNorm1d(args["hidden_size"]), self.act_func])
-            self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_gnn"]), nn.BatchNorm1d(args["hidden_size"]), self.act_func])
-            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"]), nn.BatchNorm1d(args["hidden_size"]), self.act_func]
-
-            for _ in range(args["depth"]-1):
-
-                selfmodule.extend([nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_gnn"]), nn.BatchNorm1d(args["hidden_size"]), self.act_func])
-
-        elif self.args["norm_type"] == "LayerNorm":
-
-            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"])
-            self.tune = nn.Sequential(*[nn.LayerNorm(args["hidden_size"]), self.act_func])
-            self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_gnn"]), nn.LayerNorm(args["hidden_size"]), self.act_func])
-            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_gnn"]), nn.LayerNorm(args["hidden_size"]), self.act_func]
+            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_mpn"])
+            self.tune = nn.Sequential(*[nn.BatchNorm1d(args["hidden_size"]), nn.PReLU()])
+            self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_mpn"]), nn.BatchNorm1d(args["hidden_size"]), nn.PReLU()])
+            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_mpn"]), nn.BatchNorm1d(args["hidden_size"]), nn.PReLU()]
 
             for _ in range(args["depth"]-1):
 
-                selfmodule.extend([nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_gnn"]), nn.LayerNorm(args["hidden_size"]), self.act_func])
+                selfmodule.extend([nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_mpn"]), nn.BatchNorm1d(args["hidden_size"]), nn.PReLU()])
+
+        elif args["norm_type"] == "LayerNorm":
+
+            self.W_i  = nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_mpn"])
+            self.tune = nn.Sequential(*[nn.LayerNorm(args["hidden_size"]), nn.PReLU()])
+            self.W_o  = nn.Sequential(*[nn.Linear(args["hidden_size"]*2, args["hidden_size"], bias=args["bias_mpn"]), nn.LayerNorm(args["hidden_size"]), nn.PReLU()])
+            selfmodule = [nn.Linear(ATOM_FDIM, args["hidden_size"], bias=args["bias_mpn"]), nn.LayerNorm(args["hidden_size"]), nn.PReLU()]
+
+            for _ in range(args["depth"]-1):
+
+                selfmodule.extend([nn.Linear(args["hidden_size"], args["hidden_size"], bias=args["bias_mpn"]), nn.LayerNorm(args["hidden_size"]), nn.PReLU()])
 
         self.W_ah = nn.Sequential(*selfmodule)
 
         for i in range(args["depth"]):
 
-            exec(f"modulelist{i} = self.MakeModuleList()")
+            exec(f"modulelist{i} = self.makemodulelist()")
             exec(f"self.W_h{i} = nn.Sequential(*modulelist{i})")
 
-    def MakeModuleList(self):
+    def makemodulelist(self):
 
-        modulelist = [nn.Linear(self.args["hidden_size"] + BOND_FDIM, self.args["hidden_size"], bias=self.args["bias_gnn"])]
+        modulelist = [nn.Linear(self.args["hidden_size"] + BOND_FDIM, self.args["hidden_size"], bias=self.args["bias_mpn"])]
 
-        if self.args["dropout_gnn"]:
+        if self.args["dr_mpn"]:
 
             for _ in range(self.args["agn_num"]-1):
 
-                modulelist.extend([self.act_func, nn.Dropout(p=self.args["drop_ratio_gnn"]), nn.Linear(self.args["hidden_size"], self.args["hidden_size"], bias=self.args["bias_gnn"])])
+                modulelist.extend([nn.PReLU(), nn.Dropout(p=self.args["dr_ratio_mpn"]), nn.Linear(self.args["hidden_size"], self.args["hidden_size"], bias=self.args["bias_mpn"])])
 
         elif self.args["norm_type"] == "BatchNorm":
 
             for _ in range(self.args["agn_num"]-1):
 
-                modulelist.extend([nn.BatchNorm1d(self.args["hidden_size"]), self.act_func, nn.Linear(self.args["hidden_size"], self.args["hidden_size"], bias=self.args["bias_gnn"])])
+                modulelist.extend([nn.BatchNorm1d(self.args["hidden_size"]), nn.PReLU(), nn.Linear(self.args["hidden_size"], self.args["hidden_size"], bias=self.args["bias_mpn"])])
 
         elif self.args["norm_type"] == "LayerNorm":
 
             for _ in range(self.args["agn_num"]-1):
 
-                modulelist.extend([nn.LayerNorm(self.args["hidden_size"]), self.act_func, nn.Linear(self.args["hidden_size"], self.args["hidden_size"], bias=self.args["bias_gnn"])])
+                modulelist.extend([nn.LayerNorm(self.args["hidden_size"]), nn.PReLU(), nn.Linear(self.args["hidden_size"], self.args["hidden_size"], bias=self.args["bias_mpn"])])
 
         return modulelist
 
-    def forward(self,
-                mol_graph: BatchMolGraph) -> torch.FloatTensor:
+    def forward(self, mol_graph):
         """
         Encodes a batch of molecular graphs.
         :param mol_graph: A BatchMolGraph representing a batch of molecular graphs.
@@ -240,10 +227,7 @@ class MPNEncoder(nn.Module):
         :return: A PyTorch tensor of shape (num_molecules, hidden_size) containing the encoding of each molecule.
         """
         f_atoms, f_bonds, a2a, a2b, a_scope = mol_graph.get_components()
-        if self.args["bias_gnn"]:
-            removes = torch.all(torch.logical_not(f_atoms.clone().detach()), dim=1)
-
-        self.zeros, f_atoms, f_bonds, a2b, a2a  = self.zeros.to(self.args["device"]), f_atoms.to(self.args["device"]), f_bonds.to(self.args["device"]), a2b.to(self.args["device"]), a2a.to(self.args["device"])
+        f_atoms, f_bonds, a2b, a2a    = f_atoms.to(self.args["device"]), f_bonds.to(self.args["device"]), a2b.to(self.args["device"]), a2a.to(self.args["device"])
         self.W_i, self.W_o, self.W_ah = self.W_i.to(self.args["device"]), self.W_o.to(self.args["device"]), self.W_ah.to(self.args["device"])
         self.tune = self.tune.to(self.args["device"])
 
@@ -251,23 +235,25 @@ class MPNEncoder(nn.Module):
             exec(f"self.W_h{i} = self.W_h{i}.to(self.args['device'])")
 
         input = self.W_i(f_atoms)
-        self_message, message = input, input
-        self_message[0, :], message[0, :] = 0, 0
+        self_message = input
+        message = self_message.clone()
+        #0行目は隣接原子数の数を合わせるために使っているため、値が入っていてはだめ。
+        self_message[0, :], message[0, :] = 0, 0 
 
         for depth in range(self.args["depth"]):
 
             nei_a_message = index_select_ND(message, a2a)
             nei_f_bonds   = index_select_ND(f_bonds, a2b)
             n_message = torch.cat([nei_a_message, nei_f_bonds], dim=2)
-            message   = n_message.sum(dim=1).float()
+            message   = n_message.sum(dim=1)
 
             message = eval(f"self.W_h{depth}(message)")
             self_message = self_message + message
-            message = self_message
-            message[0 , :] = 0 #ここはself_messageも影響される
+            message = self_message.clone()
+            self_message[0, :], message[0, :] = 0, 0 
 
         nei_a_message = index_select_ND(message, a2a)
-        a_message  = self.tune(nei_a_message.sum(dim=1).float())
+        a_message  = self.tune(nei_a_message.sum(dim=1))
         cc_message = self.W_ah(f_atoms)
         a_input = torch.cat([cc_message, a_message], dim=1)
         atom_hiddens = self.W_o(a_input)
