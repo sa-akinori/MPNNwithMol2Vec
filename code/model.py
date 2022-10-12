@@ -237,7 +237,7 @@ class MPNEncoder(nn.Module):
         input = self.W_i(f_atoms)
         self_message = input
         message = self_message.clone()
-        #0行目は隣接原子数の数を合わせるために使っているため、値が入っていてはだめ。
+        # Firt row must be zero, which represent as "nothing"
         self_message[0, :], message[0, :] = 0, 0 
 
         for depth in range(self.args["depth"]):
