@@ -3,9 +3,9 @@ import numpy as np
 import multiprocessing
 import os
 import fasttext
-from transform import Smiles2WahsedSmiles, SmilesToOEGraphMol
-from fingerprints import CalcECFPFeatureLevels4Mol2Vec
-from utility import MakeFolder, MakeLogFP, WriteMsgLogStdout, AssertTerminate
+from rdkit import Chem
+from fingerprints import CalcECFPFeatureLevels
+from utility import MakeFolder,AssertTerminate
 from collections import defaultdict, OrderedDict
 
 
@@ -21,64 +21,25 @@ class Mol2Vec():
         pass
 
     @staticmethod
-    def MakeFastTextInputFile(pd_smiles, folder_name='mol2vec', radius=1, use_hash=True, njobs=10, debug=False, use_curated_smiles=False):
+    def MakeFastTextInputFile(pd_smiles, folder_name='mol2vec', radius=1, njobs=10):
         """
         input_smiles: Skipt the curation part for saving the time (or reuse already curated smiles file)
         """
 
         folder = MakeFolder(folder_name)
-        logFP = MakeLogFP('%s/mol2vec.log'%folder, add_timestamp=True)
-
-        WriteMsgLogStdout(logFP, 'The number of input SMILES:\t%d'%len(pd_smiles))
-
-        # Wash input molecules
-        if not use_curated_smiles:
-            WriteMsgLogStdout(logFP, 'SMILES curation and NonstereoAromacitSmiles conversion starts')
-
-
-            split_smiles  = np.array_split(pd_smiles, njobs)
-            if debug:
-                washed_smiles = pd_smiles
-            else:
-                pool = multiprocessing.Pool(njobs)
-                washed_smiles = pd.concat(list(pool.map(lSmiles2WashedSmiles, split_smiles)))
-                pool.close()
-                pool.join()
-
-            WriteMsgLogStdout(logFP, 'Done Wash')
-            washed_smiles.dropna(inplace=True)
-            WriteMsgLogStdout(logFP, 'The number of passed Washing:\t%d'%len(washed_smiles))
-            # Drop duplicates
-            washed_smiles.drop_duplicates(inplace=True)
-            WriteMsgLogStdout(logFP, 'The number of unique SMILES:\t%d'%len(washed_smiles))
-
-            # Output clean smiles
-            washed_smiles.to_csv('%s/input_smiles.txt'%folder, sep='\t') # series
-
-        else:
-            WriteMsgLogStdout(logFP, 'Skip the SMILES curation.')
-            washed_smiles = pd_smiles.drop_duplicates()
+        pd_smiles = pd_smiles.drop_duplicates()
 
         # Make the Sentence for them
-        WriteMsgLogStdout(logFP, 'Making the FastText Input Files')
-        WriteMsgLogStdout(logFP, 'Radius:\t%d'%radius)
-        input_worker = MakeInputWorker(folder, radius, washed_smiles, njobs)
+        input_worker = MakeInputWorker(folder, radius, pd_smiles, njobs)
 
-        if debug:
-            a, b= GetFeatureSentences(washed_smiles.iloc[0], radius)
-            print(100)
-        else:
-            pool = multiprocessing.Pool(njobs)
-            pool.map(GetFeatureSentences_worker, input_worker)
-            pool.close()
-            pool.join()
+        pool = multiprocessing.Pool(njobs)
+        pool.map(GetFeatureSentences_worker, input_worker)
+        pool.close()
+        pool.join()
 
-            # cat the hash files (remove the current files later) / append statistics
-            flist_h = ['%s/hash_%d.txt'%(folder, id) for id in range(njobs)]
-            GetStatsCatFiles(flist_h, '%s/hash_sentence.txt'%folder, remove_input=True)
-
-            flist_p = ['%s/patt_%d.txt'%(folder, id) for id in range(njobs)]
-            GetStatsCatFiles(flist_p, '%s/pattern_sentence.txt'%folder, remove_input=True)
+        # cat the hash files (remove the current files later) / append statistics
+        flist_h = ['%s/hash_%d.txt'%(folder, id) for id in range(njobs)]
+        GetStatsCatFiles(flist_h, '%s/hash_sentence.txt'%folder, remove_input=True)
 
     @staticmethod
     def RunFastText(infile, outfile, ws=10, dim=100, minn=0, maxn=0, neg=5, epoch=20, minCount=1):
@@ -88,7 +49,7 @@ class Mol2Vec():
         model.save_model(outfile)
 
     @staticmethod
-    def GetRepresentation(pd_smiles, model_file, use_hash=True, radius=1, return_atomwise=False):
+    def GetRepresentation(pd_smiles, model_file, radius=1, return_atomwise=False):
         """
         IF return_atomwise is false, all the vectors are summed to generated fixed-size matrix
         Otherwise the return contains the atom-wise information of mol2vec
@@ -97,14 +58,11 @@ class Mol2Vec():
         AssertTerminate(isinstance(pd_smiles, pd.Series))
         model = fasttext.load_model(model_file)
 
-        # wash the molecules
-        washed_smiles = lSmiles2WashedSmiles(pd_smiles)
-
         # get the setntence
         ret_db = OrderedDict()
 
-        for key, smiles in washed_smiles.items():
-            vals = GetRepForSmiles(smiles, use_hash=use_hash, radius=radius, model=model)
+        for key, smiles in pd_smiles.items():
+            vals = GetRepForSmiles(smiles, radius=radius, model=model)
             if vals is None:
                 print("Found unidentifed words: (%s\t%s)"%(key, smiles))
                 continue
@@ -124,26 +82,29 @@ class Mol2Vec():
                 ret_db[key] = vals
 
         pd_db = pd.DataFrame.from_dict(ret_db, orient='index')
-        pd_db['input_washed_smiles'] = washed_smiles
+        pd_db['input_smiles'] = pd_smiles
         return pd_db
 
 
-def GetRepForSmiles(smiles, radius, use_hash, model):
-    h_val, p_val = GetFeatureSentences(smiles, radius=radius, return_atomidx=True)
-
-    # which type is used for getting representations
-    sentence = h_val if use_hash else p_val
+def GetRepForSmiles(smiles, radius, model):
+        
+    sentence = GetFeatureSentences(smiles, radius=radius)
+    
     # parse the sentence and get representation for each atoms
     vals = dict()
-    for atom_idx in sentence:
-        word_list = []
-        for word in sentence[atom_idx].split(' '):
-            # Only words in the vocaburary can be persed
-            if model.get_word_id(word) != -1:
-                word_list.append(model[word])
-            else:
-                print('Found word that are not in the dictionary')
-                return None
+    
+    for num, word in enumerate(sentence.split(' ')):
+        
+        if num%(radius+1)==0:
+            word_list = []
+            
+        atom_idx = num // (radius+1)
+        # Only words in the vocaburary can be persed
+        if model.get_word_id(word) != -1:
+            word_list.append(model[word])
+        else:
+            print('Found word that are not in the dictionary')
+            return None
         vals[atom_idx] = word_list
     return vals
 
@@ -183,55 +144,38 @@ def GetFeatureSentences_worker(smiles_id):
     smiles = smiles_id[3]
 
     fp_hash = open('%s/hash_%d.txt'%(folder, job_id), 'w', buffering=1)
-    fp_patt = open('%s/patt_%d.txt'%(folder, job_id), 'w', buffering=1)
 
     for idx, smi in smiles.items():
-        h_val, p_val = GetFeatureSentences(smi, radius=radius)
+        
+        if Chem.MolFromSmiles(smi).GetNumAtoms() == 1:
+            continue
+        
+        h_val = GetFeatureSentences(smi, radius)
+
         fp_hash.write('%s\n'%h_val)
-        fp_patt.write('%s\n'%p_val)
 
     fp_hash.close()
-    fp_patt.close()
-
-def lSmiles2WashedSmiles(pd_smiles):
-    # nonstereo aromatic smiles (for the current ECFP implementation)
-    return pd_smiles.apply(lambda x: Smiles2WahsedSmiles(x, return_nonstereo=True, ignore_warning=True))
 
 
-def GetFeatureSentences(smiles, radius, return_atomidx=False):
-    washed_mol = SmilesToOEGraphMol(smiles)
-    diameter = 2*radius
+def GetFeatureSentences(smiles, radius):
+    
+    mol = Chem.MolFromSmiles(smiles)
 
     # ECFP invariants for making a setntence
-    feature_levels = CalcECFPFeatureLevels4Mol2Vec(washed_mol, diameter=diameter)
+    feature_levels = CalcECFPFeatureLevels(mol, radius)
     # Making sentences (hash, invariants) for atoms on the path canonical smiles
     hash_sentence = ''
-    pattern_sentence = ''
-    hash_dict    = defaultdict(str)
-    pattern_dict = defaultdict(str)
-
-    for atom in washed_mol.GetAtoms():
-        # if atom.GetAtomicNum() == 1:
-        #     continue
-        if return_atomidx:
-            for depth in range(radius+1):
-                hash_dict[atom.GetIdx()]    +=" {}".format(feature_levels[1][(atom.GetIdx(), depth)][0])
-                pattern_dict[atom.GetIdx()] +=" {}".format(feature_levels[1][(atom.GetIdx(), depth)][1])
-
-            hash_dict[atom.GetIdx()]    = hash_dict[atom.GetIdx()].strip()
-            pattern_dict[atom.GetIdx()] = pattern_dict[atom.GetIdx()].strip()
-
-        else:
-            for depth in range(radius+1):
-                hash_sentence    += " {}".format(feature_levels[1][(atom.GetIdx(), depth)][0])
-                pattern_sentence += " {}".format(feature_levels[1][(atom.GetIdx(), depth)][1]) # space separation.... lets see
+      
+    for atom in mol.GetAtoms():
+        
+        for depth in range(radius+1):
+            
+            try:
+                hash_sentence    += " {}".format(feature_levels[atom.GetIdx()][depth])
+            except:
+                continue
 
 
     # only start and end points
     hash_sentence = hash_sentence.strip()
-    pattern_sentence = pattern_sentence.strip()
-
-    if return_atomidx:
-        return hash_dict, pattern_dict
-    else:
-        return hash_sentence, pattern_sentence
+    return hash_sentence

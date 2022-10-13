@@ -88,16 +88,17 @@ class downstream:
 #%%
 if __name__=="__main__":
     folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/"
-    if 0:
+    radius = 3
+    
+    if 1:
         #Train mol2vec model
         #folder shows the absolute path where save data of compounds for mol2vec.
-        folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/"
-        make_corpus(base_folder=folder, target_name="example_mol2vec", radius=3, use_input_smiles=False)
-        train_mol2vec(base_folder=folder)
+        make_corpus(base_folder=folder, file_name="example_mol2vec", radius=radius)
+        train_mol2vec(base_folder=folder,radius=radius)
     
-    if 0:
+    if 1:
         #Generate mol2vec with smiles of downstream task
-        mol2vec_model = folder + "mol2vec/mol2vec_radius3.bin" #
+        mol2vec_model = folder + "mol2vec/mol2vec_radius%s.bin"%radius #
         task = pd.read_csv("../data/example_downstream.csv", index_col=0)
         cpds = list(set([smiles for smiles in task["nonstereo_aromatic_smiles"]]))
         cpds = pd.Series(cpds)

@@ -4,14 +4,13 @@ import torch
 import random
 import numpy as np
 import torch.nn as nn
-from openeye import oechem
-from transform import SmilesToOEGraphMol, Smiles2WahsedSmiles
+from rdkit import Chem
 
 ATOM_FDIM, BOND_FDIM = 400, 6
 
 def RandomSeed(seed):
     """
-    To make deterministic work.
+    These are necessary to make deterministic work.
     """
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -23,7 +22,7 @@ def RandomSeed(seed):
     torch.use_deterministic_algorithms = True
 
 def Mol2Vec(smiles, idx, reference):
-    mol2vec = reference.query("input_washed_smiles == @smiles").reset_index(drop=True)
+    mol2vec = reference.query("input_smiles == @smiles").reset_index(drop=True)
     return np.hstack(mol2vec.loc[0, idx]).tolist()
 
 def onek_encoding_unk(x, allowable_set):
@@ -32,12 +31,11 @@ def onek_encoding_unk(x, allowable_set):
     return [x == s for s in allowable_set]
 
 def BondGenerate(bond):
-    if bond.IsAromatic():
-        bt = 0
+    if bond.GetIsAromatic():
+        bt = 0 # the same as unspecified in RDKit
     else:
-        bt = bond.GetOrder()
-    fbond = onek_encoding_unk(bt, [0, 1, 2, 3, 4])
-    fbond = fbond + [bond.IsInRing()]
+        bt = int(bond.GetBondType())
+    fbond = [bond.IsInRing()] + onek_encoding_unk(bt, [0, 1, 2, 3, 4])
     return fbond
 
 def index_select_ND(source, index):
@@ -72,10 +70,8 @@ class MolGraph:
             self.a2a, self.a2b = [], []
 
         else:
-            smiles = oechem.OECreateCanSmiString(SmilesToOEGraphMol(smiles, True))
-            smiles = Smiles2WahsedSmiles(smiles, return_nonstereo=True, ignore_warning=True)
-            mol = SmilesToOEGraphMol(smiles, True)
-            self.n_atoms, self.n_bonds = mol.NumAtoms(), mol.NumBonds()
+            mol = Chem.MolFromSmiles(smiles)
+            self.n_atoms, self.n_bonds = mol.GetNumAtoms(), mol.GetNumBonds()
             self.f_atoms, self.f_bonds = [[] for _ in range(self.n_atoms)], [[] for _ in range(self.n_bonds)]
             self.a2a, self.a2b = [[] for _ in range(self.n_atoms)], [[] for _ in range(self.n_atoms)]
             
@@ -84,7 +80,7 @@ class MolGraph:
             mid_idx = 0
             sep_smiles = smiles.split(".")
             for s_smile in sep_smiles:
-                for s_atom in SmilesToOEGraphMol(s_smile).GetAtoms():
+                for s_atom in Chem.MolFromSmiles(s_smile).GetAtoms():
                     idx = s_atom.GetIdx()
                     f_atoms = Mol2Vec(s_smile, idx, mol2vec)
                     self.f_atoms[idx + mid_idx] = f_atoms
@@ -93,10 +89,10 @@ class MolGraph:
 
             for atom1 in mol.GetAtoms():
 
-                neigh = [a for a in atom1.GetAtoms()]
+                neigh = [a for a in atom1.GetNeighbors()]
                 self.a2a[atom1.GetIdx()] = [a.GetIdx() for a in neigh]
 
-                bonds = [mol.GetBond(atom1, atom2) for atom2 in neigh]
+                bonds = [mol.GetBondBetweenAtoms(atom1.GetIdx(), atom2.GetIdx()) for atom2 in neigh]
                 bond_idx = [bond.GetIdx() for bond in bonds]
                 self.a2b[atom1.GetIdx()] = bond_idx
 
@@ -237,8 +233,8 @@ class MPNEncoder(nn.Module):
         input = self.W_i(f_atoms)
         self_message = input
         message = self_message.clone()
-        #0行目は隣接原子数の数を合わせるために使っているため、値が入っていてはだめ。
-        self_message[0, :], message[0, :] = 0, 0 
+        
+        self_message[0, :], message[0, :] = 0, 0 #It is bad to exist value in row 0, because row 0 is used to adjust the number of neighborhood atoms.
 
         for depth in range(self.args["depth"]):
 
