@@ -1,11 +1,7 @@
 from rdkit import Chem
-from rdkit.Chem import Descriptors, MolFromSmiles, QED, AllChem
-from rdkit.ML.Descriptors import MoleculeDescriptors
-from collections import OrderedDict, defaultdict
+from rdkit.Chem import Descriptors, AllChem
+from collections import defaultdict
 import numpy as np
-import pandas as pd
-import multiprocessing 
-from functools import partial
 
 # global variable
 rdkit_descriptorlist = [desc[0] for desc in Descriptors._descList]

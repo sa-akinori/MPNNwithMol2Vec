@@ -5,7 +5,7 @@ import os
 import fasttext
 from rdkit import Chem
 from fingerprints import CalcECFPFeatureLevels
-from utility import MakeFolder,AssertTerminate
+from utility import MakeFolder, AssertTerminate
 from collections import defaultdict, OrderedDict
 
 

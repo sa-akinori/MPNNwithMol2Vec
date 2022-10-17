@@ -10,7 +10,7 @@ ATOM_FDIM, BOND_FDIM = 400, 6
 
 def RandomSeed(seed):
     """
-    These are necessary to make deterministic work.
+    It is necessary to make deterministic work.
     """
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -76,7 +76,7 @@ class MolGraph:
             self.a2a, self.a2b = [[] for _ in range(self.n_atoms)], [[] for _ in range(self.n_atoms)]
             
             #mol2vec of each molecule is saved in mol2vec file, so we can't extract feature of concatenated smiles by dot like "a.b".
-            #Therefore, we split smiles
+            #Therefore, we split smiles.
             mid_idx = 0
             sep_smiles = smiles.split(".")
             for s_smile in sep_smiles:

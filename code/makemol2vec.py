@@ -4,7 +4,10 @@ import pandas as pd
 from mol2vec import Mol2Vec
 
 def make_corpus(base_folder, file_name, radius=2):
-
+    """
+        file_name : Path of text file which have compounds to create Mol2Vec
+        radius : Radius to consider to make Mol2Vec
+    """
     curated_smiles = pd.read_csv('%s/%s.txt'%(base_folder, file_name), sep="\t", index_col=0)
     Mol2Vec.MakeFastTextInputFile(curated_smiles["nonstereo_aromatic_smiles"], folder_name=base_folder + '/mol2vec', radius=radius, njobs=10)
 

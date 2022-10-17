@@ -11,7 +11,7 @@ from sklearn.model_selection import train_test_split
 
 class downstream:
     """
-    This is an example of how to use mpn and to create graph.
+    This is an example of how to use mpnn and how to create graph.
     """
     def __init__(self, arg):
 
@@ -27,7 +27,7 @@ class downstream:
         self.scaler = torch.cuda.amp.GradScaler()
 
     def get_graph(self, smiles, mol2vec):
-        #Generating graphs is time-consuming, so generate them in advance.
+        #Generating graph is time-consuming, so generate them in advance.
         self.graph = dict()
         for cpd in smiles:
             self.graph[cpd] = MolGraph(cpd, mol2vec)
@@ -87,7 +87,7 @@ class downstream:
         
 #%%
 if __name__=="__main__":
-    folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/"
+    folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/" #Please change this part to fit on your work.
     radius = 3
     
     if 1:
@@ -98,7 +98,7 @@ if __name__=="__main__":
     
     if 1:
         #Generate mol2vec with smiles of downstream task
-        mol2vec_model = folder + "mol2vec/mol2vec_radius%s.bin"%radius #
+        mol2vec_model = folder + "mol2vec/mol2vec_radius%s.bin"%radius 
         task = pd.read_csv("../data/example_downstream.csv", index_col=0)
         cpds = list(set([smiles for smiles in task["nonstereo_aromatic_smiles"]]))
         cpds = pd.Series(cpds)
@@ -110,7 +110,7 @@ if __name__=="__main__":
         #train and test of downstream task(Example of demonstration)
         task = pd.read_csv("../data/example_downstream.csv", index_col=0).drop_duplicates(subset="nonstereo_aromatic_smiles", keep=False)
         train, test = train_test_split(task, test_size=0.1)
-        arg = {"device":"cuda", "epoch":2, "depth":4, "dr_ratio_mpn":0.1, "hidden_size":400, 
+        arg = {"device":"cuda", "epoch":2, "depth":4, "dr_ratio_mpn":0.0, "hidden_size":400, 
                "agn_num":2, "dr_mpn":True, "bias_mpn":True, "batch_size":16} #depth, dr_ratio_mpn, hidden_size, agn_num  are hyperparameters.
         mol2vec = pd.read_pickle(folder+"mol2vec/mol2vec.pkl")
         model = downstream(arg)
