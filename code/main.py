@@ -87,7 +87,7 @@ class downstream:
         
 #%%
 if __name__=="__main__":
-    folder = "/home/sato_akinori/ForGithub/GraphConvolutionNetworkwithMol2Vec/data/" #Please change this part to fit on your work.
+    folder = "/home/sato_akinori/MPNNwithMol2Vec/data/" #Please change this part to fit on your work.
     radius = 3
     
     if 1:
