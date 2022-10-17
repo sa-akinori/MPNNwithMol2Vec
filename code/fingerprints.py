@@ -56,4 +56,4 @@ def CalcECFPFeatureLevels(mol, radius=2):
     """
     ecfp = GetMorganFeatures(mol, radius, input_smiles=False, return_atom_hash=True, include_duplicate_hashes=True)
     
-    return ecfp # feature level list is return.
+    return ecfp 

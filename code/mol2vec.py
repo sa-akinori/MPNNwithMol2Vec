@@ -175,7 +175,5 @@ def GetFeatureSentences(smiles, radius):
             except:
                 continue
 
-
-    # only start and end points
     hash_sentence = hash_sentence.strip()
     return hash_sentence
